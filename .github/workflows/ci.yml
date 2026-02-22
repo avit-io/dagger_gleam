@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Generate and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installiamo l'ambiente tramite Nix (Erlang, Gleam, JQ, Dagger, dgl)
+      - uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      # Eseguiamo tutto tramite il comando che usi in locale
+      - name: Full CI Pipeline
+        run: nix develop .#default --command dgl ci

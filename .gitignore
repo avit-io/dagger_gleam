@@ -4,3 +4,5 @@
 erl_crash.dump
 .direnv
 sdk/src/dagger/dsl
+build/
+codegen/src/dagger/schema.generated.json
