@@ -2,6 +2,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/string
 
@@ -117,7 +118,8 @@ fn serialize_args(args: List(#(String, Value))) -> String {
 
 fn serialize_value(value: Value) -> String {
   case value {
-    GString(s) -> "\"" <> s <> "\""
+    GString(s) -> json.to_string(json.string(s))
+    // gestisce tutti gli escape
     GInt(i) -> int.to_string(i)
     GFloat(f) -> float.to_string(f)
     GBool(True) -> "true"
@@ -132,8 +134,16 @@ fn serialize_value(value: Value) -> String {
     GNull -> "null"
     // Nota: GDeferred non deve essere serializzato direttamente.
     // L'interprete deve risolverlo in GString(id) prima della serializzazione finale.
-    GDeferred(_) ->
-      panic as "GDeferred found during serialization. Interprete must resolve it first!"
+    GDeferred(op) -> {
+      let fields = get_query(op)
+      // produce: setSecret(name: "my_token", plaintext: "***")
+      // NON: { setSecret(...) }
+      case nest(fields) {
+        [field] -> serialize_field(field)
+        // singolo campo radice
+        _ -> panic as "GDeferred deve avere un solo campo radice"
+      }
+    }
   }
 }
 

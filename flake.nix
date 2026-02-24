@@ -27,31 +27,31 @@
 		dgl = pkgs.writeShellScriptBin "dgl" ''
 		  ROOT="$(git rev-parse --show-toplevel)"
 
-      # Verifica se Docker è raggiungibile
-      if ! ${pkgs.docker}/bin/docker info > /dev/null 2>&1; then
-        echo "Error: Docker daemon not found or not accessible. Dagger needs Docker!"
-        exit 1
-      fi
+        # Verifica se Docker è raggiungibile
+		if ! ${pkgs.docker}/bin/docker info > /dev/null 2>&1; then
+          echo "Error: Docker daemon not found or not accessible. Dagger needs Docker!"
+          exit 1
+        fi
 
-		  case "$1" in
-		    generate)
-		      bash "$ROOT/codegen/scripts/fetch_schema.sh"
-		      cd "$ROOT/codegen" && gleam run -m dagger_codegen
-		      ;;
-		    test)
-		      cd "$ROOT/sdk" && dagger run --progress=plain gleam test
-		      ;;
-		    ci)
-		      bash "$ROOT/codegen/scripts/fetch_schema.sh" &&
-		      cd "$ROOT/codegen" && gleam run -m dagger_codegen &&
-		      cd "$ROOT/sdk" && dagger run --progress=plain gleam test
-		      ;;
-		    *)
-		      echo "Usage: dgl <generate|test|ci>"
-		      exit 1
-		      ;;
-		  esac
-		'';
+		case "$1" in
+		  generate)
+		    bash "$ROOT/codegen/scripts/fetch_schema.sh"
+		    cd "$ROOT/codegen" && gleam run -m dagger_codegen
+		    ;;
+		  test)
+		    cd "$ROOT/sdk" && dagger run --progress=plain gleam test
+		    ;;
+		  ci)
+		    bash "$ROOT/codegen/scripts/fetch_schema.sh" &&
+		    cd "$ROOT/codegen" && gleam run -m dagger_codegen &&
+		    cd "$ROOT/sdk" && dagger run --progress=plain gleam test
+		    ;;
+		   *)
+		    echo "Usage: dgl <generate|test|ci>"
+		    exit 1
+		    ;;
+		esac
+	    '';
 
         treefmtEval = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
@@ -63,7 +63,7 @@
           buildInputs = [
             pkgs.gleam
             pkgs.erlang
-			      pkgs.jq
+			pkgs.jq
             pkgs.docker-client
             dagger.packages.${system}.dagger
             dgl

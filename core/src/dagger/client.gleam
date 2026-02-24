@@ -1,3 +1,4 @@
+import dagger/logger.{Query}
 import dagger/types.{
   type Client, type GraphQLError, type QueryError, type Try, Client,
   DecodingError, ExecutionError, GraphQLError, NetworkError,
@@ -55,11 +56,7 @@ pub fn connect(callback: fn(Client) -> a) -> a {
 }
 
 pub fn raw_query(client: Client, query_string: String) -> Try(dynamic.Dynamic) {
-  // --- AGGIUNGI QUESTO ---
-  io.println("\n🚀 INVIO QUERY GRAPHQL:")
-  io.println(query_string)
-  io.println("------------------------\n")
-  // ------------------------
+  logger.report(Query(query_string))
 
   let body = json.object([#("query", json.string(query_string))])
   let auth =

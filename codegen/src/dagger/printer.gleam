@@ -36,6 +36,8 @@ pub type TypeClass {
   IsEnum
   IsObject
   IsInput
+  IsBox
+  // ID scalare che wrappa un oggetto — ContainerID, SecretID, ecc.
 }
 
 // =============================================================================
@@ -127,11 +129,11 @@ fn inner_type(ref: TypeRef) -> TypeRef {
 
 fn unique_args(args: List(ArgDef)) -> List(ArgDef) {
   list.fold(over: args, from: [], with: fn(acc, arg) {
-    let ArgDef(name: name_to_check, ..) = arg
+    let ArgDef(name: argn, type_: argt, ..) = arg
     let exists =
       list.any(acc, fn(a) {
-        let ArgDef(name: existing_name, ..) = a
-        existing_name == name_to_check
+        let ArgDef(name: an, type_: at, ..) = a
+        an == argn && get_return_type_name(at) == get_return_type_name(argt)
       })
     case exists {
       True -> acc
@@ -139,6 +141,23 @@ fn unique_args(args: List(ArgDef)) -> List(ArgDef) {
     }
   })
   |> list.reverse
+}
+
+fn get_variant_name(arg: ArgDef, all_opts: List(ArgDef)) -> String {
+  let ArgDef(name: argn, type_: argt, ..) = arg
+  let same_name_different_type =
+    list.any(all_opts, fn(a) {
+      let ArgDef(name: an, type_: at, ..) = a
+      an == argn && at != argt
+    })
+  case same_name_different_type {
+    False -> capitalize(argn)
+    True -> capitalize(argn) <> get_return_type_name(argt)
+  }
+}
+
+fn resolve_opt_variants(all_opts: List(ArgDef)) -> List(#(String, ArgDef)) {
+  list.map(all_opts, fn(arg) { #(get_variant_name(arg, all_opts), arg) })
 }
 
 fn get_query_fields(
@@ -177,20 +196,11 @@ fn get_query_field_for_type(
 fn resolve_box(name: String, type_defs: List(TypeDef)) -> String {
   list.find_map(type_defs, fn(td) {
     case td {
-      BoxDef(n, target) if n == name -> Ok(target)
+      BoxDef(n, inner_type) if n == name -> Ok(inner_type)
       _ -> Error(Nil)
     }
   })
   |> result.unwrap(name)
-}
-
-fn get_variant_name(arg: ArgDef, all_opts: List(ArgDef)) -> String {
-  let same_name_args = list.filter(all_opts, fn(a) { a.name == arg.name })
-
-  case list.length(same_name_args) {
-    1 -> capitalize(arg.name)
-    _ -> capitalize(arg.name) <> capitalize(get_return_type_name(arg.type_))
-  }
 }
 
 // =============================================================================
@@ -361,6 +371,7 @@ fn decode_for_type(ref: TypeRef, type_defs: List(TypeDef)) -> String {
 
 // Blocco Fetch per terminal function.
 // query_expr: espressione Gleam che produce DaggerOp(List(Field))
+// Produce Pure(Ok(val)) o Pure(Error(DecodingError(...))) — mai panic.
 fn generate_fetch_body(
   field_name: String,
   query_expr: String,
@@ -369,9 +380,9 @@ fn generate_fetch_body(
 ) -> String {
   let decoder = decode_for_type(ref, type_defs)
   let base = inner_type(ref)
-  let pure_val = case base {
-    Named("Nil") -> "types.Pure(Nil)"
-    _ -> "types.Pure(val)"
+  let pure_ok = case base {
+    Named("Nil") -> "types.Pure(Ok(Nil))"
+    _ -> "types.Pure(Ok(val))"
   }
   "  let op = {\n"
   <> "    use q <- types.bind("
@@ -387,11 +398,11 @@ fn generate_fetch_body(
   <> decoder
   <> ")) {\n"
   <> "          Ok(val) -> "
-  <> pure_val
+  <> pure_ok
   <> "\n"
-  <> "          Error(_) -> panic as \"Decoding error in "
+  <> "          Error(_) -> types.Pure(Error(types.DecodingError(\""
   <> field_name
-  <> "\"\n"
+  <> "\")))\n"
   <> "        }\n"
   <> "      }\n"
   <> "    )\n"
@@ -399,6 +410,7 @@ fn generate_fetch_body(
 }
 
 // Blocco Fetch per selection function (lista di oggetti).
+// Produce Pure(Ok(items)) o Pure(Error(DecodingError(...))) — mai panic.
 fn generate_fetch_list_body(
   field_name: String,
   query_expr: String,
@@ -415,12 +427,12 @@ fn generate_fetch_list_body(
   <> "      next: fn(dyn) {\n"
   <> "        let path = types.make_path(full_query)\n"
   <> "        case decode.run(dyn, decode.at(path, decode.list(decode.dynamic))) {\n"
-  <> "          Ok(items) -> types.Pure(list.map(items, fn(_) { "
+  <> "          Ok(items) -> types.Pure(Ok(list.map(items, fn(_) { "
   <> inner_constructor
-  <> " }))\n"
-  <> "          Error(_) -> panic as \"Decoding error in "
+  <> " })))\n"
+  <> "          Error(_) -> types.Pure(Error(types.DecodingError(\""
   <> field_name
-  <> "\"\n"
+  <> "\")))\n"
   <> "        }\n"
   <> "      }\n"
   <> "    )\n"
@@ -437,12 +449,12 @@ pub fn print_type_ref(ref: TypeRef, type_defs: List(TypeDef)) -> String {
       let unboxed =
         list.find_map(type_defs, fn(td) {
           case td {
-            BoxDef(n, target) if n == name -> Ok(target)
+            BoxDef(n, inner_type) if n == name -> Ok(inner_type)
             _ -> Error(Nil)
           }
         })
       case unboxed {
-        Ok(target) -> "t." <> target
+        Ok(inner_type) -> "t." <> inner_type
         Error(Nil) ->
           case is_builtin(name) {
             True -> name
@@ -461,12 +473,12 @@ fn print_type_ref_local(ref: TypeRef, type_defs: List(TypeDef)) -> String {
       let unboxed =
         list.find_map(type_defs, fn(td) {
           case td {
-            BoxDef(n, inner) if n == name -> Ok(inner)
+            BoxDef(n, inner_type) if n == name -> Ok(inner_type)
             _ -> Error(Nil)
           }
         })
       case unboxed {
-        Ok(inner) -> inner
+        Ok(inner_type) -> inner_type
         Error(Nil) -> name
       }
     }
@@ -549,9 +561,7 @@ fn generate_args_sig(args: List(ArgDef), type_defs: List(TypeDef)) -> String {
 
 fn generate_gql_args(args: List(ArgDef), type_defs: List(TypeDef)) -> String {
   let #(required, optional) = split_args(args)
-
-  // Gestiamo i required come stringa
-  let req_fields_str =
+  let req_fields =
     required
     |> list.map(fn(arg) {
       "#(\""
@@ -560,17 +570,16 @@ fn generate_gql_args(args: List(ArgDef), type_defs: List(TypeDef)) -> String {
       <> type_ref_to_gql_value(to_snake_case(arg.name), arg.type_, type_defs)
       <> ")"
     })
-    |> string.join(", ")
-  let req_part = "[" <> req_fields_str <> "]"
-
   case optional {
-    [] -> req_part
-    _ -> {
+    [] -> "[" <> string.join(req_fields, ", ") <> "]"
+    _ ->
       case required {
         [] -> "encode_opts(opts)"
-        _ -> "list.append(" <> req_part <> ", encode_opts(opts))"
+        _ ->
+          "list.append(["
+          <> string.join(req_fields, ", ")
+          <> "], encode_opts(opts))"
       }
-    }
   }
 }
 
@@ -693,7 +702,6 @@ fn generate_object_option_type(
             IsScalar -> "String"
             _ -> print_type_ref(arg.type_, type_defs)
           }
-          // USA IL NOME UNICO QUI
           "  " <> get_variant_name(arg, all_opts) <> "(" <> input_type <> ")"
         })
         |> string.join("\n")
@@ -710,17 +718,16 @@ fn generate_object_encode_opts(
     [] -> ""
     _ -> {
       let cases =
-        all_opts
-        |> list.map(fn(arg) {
-          let variant = get_variant_name(arg, all_opts)
-          // NOME UNICO
+        resolve_opt_variants(all_opts)
+        |> list.map(fn(pair) {
+          let #(variant_name, arg) = pair
           let type_name = get_return_type_name(arg.type_)
           let gql_val = case classify_type(type_name, type_defs) {
             IsScalar -> "types.GString(val)"
             _ -> type_ref_to_gql_value("val", arg.type_, type_defs)
           }
           "    "
-          <> variant
+          <> variant_name
           <> "(val) -> Ok(#(\""
           <> arg.name
           <> "\", "
@@ -849,21 +856,26 @@ fn generate_types_module(type_defs: List(TypeDef)) -> String {
 
 fn generate_function(
   parent_name: String,
+  fn_prefix: String,
   field: FieldDef,
   type_defs: List(TypeDef),
 ) -> String {
   case is_list_of_object(field.return_type, type_defs) {
-    True -> generate_selection_function(parent_name, field, type_defs)
+    True ->
+      generate_selection_function(parent_name, fn_prefix, field, type_defs)
     False ->
       case is_terminal(field.return_type, type_defs) {
-        True -> generate_terminal_function(parent_name, field, type_defs)
-        False -> generate_chain_function(parent_name, field, type_defs)
+        True ->
+          generate_terminal_function(parent_name, fn_prefix, field, type_defs)
+        False ->
+          generate_chain_function(parent_name, fn_prefix, field, type_defs)
       }
   }
 }
 
 fn generate_chain_function(
   parent_name: String,
+  fn_prefix: String,
   field: FieldDef,
   type_defs: List(TypeDef),
 ) -> String {
@@ -878,6 +890,7 @@ fn generate_chain_function(
     ])
   description_for(field)
   <> "pub fn "
+  <> fn_prefix
   <> fn_name_for(field)
   <> "("
   <> sig
@@ -902,6 +915,7 @@ fn generate_chain_function(
 // Terminal: CPS — riceve client e handler, non restituisce Result direttamente.
 fn generate_terminal_function(
   parent_name: String,
+  fn_prefix: String,
   field: FieldDef,
   type_defs: List(TypeDef),
 ) -> String {
@@ -917,6 +931,7 @@ fn generate_terminal_function(
     generate_fetch_body(field.name, "parent.op", field.return_type, type_defs)
   description_for(field)
   <> "pub fn "
+  <> fn_prefix
   <> fn_name_for(field)
   <> "("
   <> sig
@@ -934,6 +949,7 @@ fn generate_terminal_function(
 // Selection: CPS con select + client + handler.
 fn generate_selection_function(
   parent_name: String,
+  fn_prefix: String,
   field: FieldDef,
   type_defs: List(TypeDef),
 ) -> String {
@@ -955,6 +971,7 @@ fn generate_selection_function(
     generate_fetch_list_body(field.name, "parent.op", inner_constructor)
   description_for(field)
   <> "pub fn "
+  <> fn_prefix
   <> fn_name_for(field)
   <> "("
   <> sig
@@ -974,6 +991,7 @@ fn generate_selection_function(
 
 fn generate_object_functions(
   name: String,
+  fn_prefix: String,
   fields: List(FieldDef),
   query_fields: List(FieldDef),
   type_defs: List(TypeDef),
@@ -1006,7 +1024,9 @@ fn generate_object_functions(
   let functions =
     fields
     |> list.filter(fn(field) { fn_name_for(field) != constructor_name })
-    |> list.map(fn(field) { generate_function(name, field, type_defs) })
+    |> list.map(fn(field) {
+      generate_function(name, fn_prefix, field, type_defs)
+    })
     |> string.join("\n\n")
   header <> imports <> options_type <> encode_func <> constructor <> functions
 }
@@ -1019,8 +1039,45 @@ fn generate_object_functions(
 fn generate_dag_function(field: FieldDef, type_defs: List(TypeDef)) -> String {
   case is_list_of_object(field.return_type, type_defs) {
     True -> generate_dag_selection_function(field, type_defs)
-    False -> generate_dag_terminal_function(field, type_defs)
+    False ->
+      case is_terminal(field.return_type, type_defs) {
+        True -> generate_dag_terminal_function(field, type_defs)
+        False -> generate_dag_chain_function(field, type_defs)
+      }
   }
+}
+
+fn generate_dag_chain_function(
+  field: FieldDef,
+  type_defs: List(TypeDef),
+) -> String {
+  let #(required, optional) = split_args(field.arguments)
+  let return_type = print_type_ref(field.return_type, type_defs)
+  let return_type_name =
+    get_return_type_name(field.return_type)
+    |> resolve_box(type_defs)
+  let sig =
+    join_sig([
+      build_required_sig(required, type_defs),
+      build_opts_sig(optional, "Opt"),
+    ])
+  description_for(field)
+  <> "pub fn "
+  <> fn_name_for(field)
+  <> "("
+  <> sig
+  <> ") -> "
+  <> return_type
+  <> " {\n"
+  <> "  let field = types.Field(name: \""
+  <> field.name
+  <> "\", args: "
+  <> generate_gql_args(field.arguments, type_defs)
+  <> ", subfields: [])\n"
+  <> "  t."
+  <> return_type_name
+  <> "(op: types.Pure([field]))\n"
+  <> "}"
 }
 
 // dag terminal: nessun parent — la query parte da types.Pure([])
@@ -1099,6 +1156,16 @@ fn generate_dag_module(
   fields: List(FieldDef),
   type_defs: List(TypeDef),
 ) -> String {
+  let all_opts =
+    fields
+    |> list.flat_map(fn(f) { f.arguments })
+    |> list.filter(fn(arg) {
+      case arg.type_ {
+        NonNull(_) -> False
+        _ -> True
+      }
+    })
+    |> unique_args()
   let header = "// AUTO-GENERATED BY DAGGER_GLEAM - DO NOT EDIT\n\n"
   let imports =
     "import dagger/types.{type Client, type Try} as types\n"
@@ -1106,21 +1173,95 @@ fn generate_dag_module(
     <> "import dagger/dsl/types as t\n"
     <> "import gleam/dynamic/decode\n"
     <> "import gleam/list\n\n"
-  // dag espone solo primitive e liste — le chain sono nei moduli oggetto
+  let options_type = generate_object_option_type(all_opts, type_defs)
+  let encode_func = generate_object_encode_opts(all_opts, type_defs)
   let functions =
     fields
-    |> list.filter(fn(f) {
-      is_terminal(f.return_type, type_defs)
-      || is_list_of_object(f.return_type, type_defs)
-    })
     |> list.map(fn(f) { generate_dag_function(f, type_defs) })
     |> string.join("\n\n")
-  header <> imports <> functions
+  header <> imports <> options_type <> encode_func <> functions
 }
 
 // =============================================================================
 // 13. ENTRY POINT PUBBLICO
 // =============================================================================
+
+fn forced_groups() -> List(#(String, List(String))) {
+  [
+    #("git", ["GitRepository", "GitRef"]),
+    #("engine", ["Engine", "EngineCache", "EngineCacheEntrySet"]),
+  ]
+}
+
+fn fn_prefix_for(type_name: String, module_name: String) -> String {
+  let capitalized_module = capitalize(module_name)
+  let residual = case string.starts_with(type_name, capitalized_module) {
+    True -> string.drop_start(type_name, string.length(capitalized_module))
+    False -> type_name
+  }
+  case residual {
+    "" -> to_snake_case(type_name) <> "_"
+    _ -> to_snake_case(residual) <> "_"
+  }
+}
+
+fn build_type_groups(
+  type_defs: List(TypeDef),
+  query_type_name: String,
+) -> List(#(String, List(String))) {
+  let edges =
+    list.filter_map(type_defs, fn(td) {
+      case td {
+        ObjectDef(name, _, fields) if name != query_type_name -> {
+          let referenced =
+            fields
+            |> list.map(fn(f) { get_return_type_name(f.return_type) })
+            |> list.filter(fn(n) {
+              list.any(type_defs, fn(td2) {
+                case td2 {
+                  ObjectDef(n2, _, _) if n2 == n && n2 != query_type_name ->
+                    True
+                  _ -> False
+                }
+              })
+            })
+          Ok(#(name, referenced))
+        }
+        _ -> Error(Nil)
+      }
+    })
+  let all_names = list.map(edges, fn(e) { e.0 })
+  let referenced_by_others = list.flat_map(edges, fn(e) { e.1 })
+  let roots =
+    list.filter(all_names, fn(n) { !list.contains(referenced_by_others, n) })
+  list.map(roots, fn(root) {
+    #(to_snake_case(root), collect_group(root, edges, [root]))
+  })
+}
+
+fn collect_group(
+  name: String,
+  edges: List(#(String, List(String))),
+  visited: List(String),
+) -> List(String) {
+  let children =
+    list.find_map(edges, fn(e) {
+      case e.0 == name {
+        True -> Ok(e.1)
+        False -> Error(Nil)
+      }
+    })
+    |> result.unwrap([])
+    |> list.filter(fn(n) { !list.contains(visited, n) })
+    |> list.filter(fn(child) {
+      let refs =
+        list.filter(edges, fn(e) { list.contains(e.1, child) && e.0 != child })
+      list.length(refs) == 1
+    })
+  list.fold(children, visited, fn(acc, child) {
+    collect_group(child, edges, list.append(acc, [child]))
+  })
+}
 
 pub fn files_to_generate(
   type_defs: List(TypeDef),
@@ -1128,18 +1269,158 @@ pub fn files_to_generate(
 ) -> List(#(String, String)) {
   let types_file = #("types.gleam", generate_types_module(type_defs))
   let query_fields = get_query_fields(type_defs, query_type_name)
-  let function_files =
-    list.filter_map(type_defs, fn(td) {
+
+  let dag_file = case
+    list.find_map(type_defs, fn(td) {
       case td {
         ObjectDef(name, _, fields) if name == query_type_name ->
-          Ok(#("dag.gleam", generate_dag_module(fields, type_defs)))
-        ObjectDef(name, _, fields) ->
-          Ok(#(
-            to_snake_case(name) <> ".gleam",
-            generate_object_functions(name, fields, query_fields, type_defs),
-          ))
+          Ok(generate_dag_module(fields, type_defs))
         _ -> Error(Nil)
       }
     })
-  [types_file, ..function_files]
+  {
+    Ok(content) -> [#("dag.gleam", content)]
+    Error(_) -> []
+  }
+
+  let object_defs =
+    list.filter_map(type_defs, fn(td) {
+      case td {
+        ObjectDef(name, _, fields) if name != query_type_name ->
+          Ok(#(name, fields))
+        _ -> Error(Nil)
+      }
+    })
+
+  let forced = forced_groups()
+  let forced_names = list.flat_map(forced, fn(g) { g.1 })
+
+  let remaining_type_defs =
+    list.filter(type_defs, fn(td) {
+      case td {
+        ObjectDef(name, _, _) -> !list.contains(forced_names, name)
+        _ -> True
+      }
+    })
+
+  let auto_groups = build_type_groups(remaining_type_defs, query_type_name)
+  let auto_grouped_names = list.flat_map(auto_groups, fn(g) { g.1 })
+  let all_groups = list.append(forced, auto_groups)
+  let all_grouped_names = list.append(forced_names, auto_grouped_names)
+
+  let grouped_files =
+    list.map(all_groups, fn(group) {
+      let #(module_name, members) = group
+      let group_defs =
+        list.filter_map(members, fn(member) {
+          list.find_map(object_defs, fn(od) {
+            case od.0 == member {
+              True -> Ok(#(module_name, od.0, od.1))
+              False -> Error(Nil)
+            }
+          })
+        })
+      #(
+        module_name <> ".gleam",
+        generate_grouped_module(group_defs, query_fields, type_defs),
+      )
+    })
+
+  let ungrouped_files =
+    list.filter_map(object_defs, fn(od) {
+      case list.contains(all_grouped_names, od.0) {
+        True -> Error(Nil)
+        False ->
+          Ok(#(
+            to_snake_case(od.0) <> ".gleam",
+            generate_object_functions(od.0, "", od.1, query_fields, type_defs),
+          ))
+      }
+    })
+
+  [
+    types_file,
+    ..list.append(dag_file, list.append(grouped_files, ungrouped_files))
+  ]
+}
+
+fn generate_grouped_module(
+  group: List(#(String, String, List(FieldDef))),
+  query_fields: List(FieldDef),
+  type_defs: List(TypeDef),
+) -> String {
+  let header = "// AUTO-GENERATED BY DAGGER_GLEAM - DO NOT EDIT\n\n"
+  let imports =
+    "import dagger/types.{type Client, type Try} as types\n"
+    <> "import dagger/interpreter\n"
+    <> "import dagger/dsl/types as t\n"
+    <> "import gleam/dynamic/decode\n"
+    <> "import gleam/list\n\n"
+
+  // Raccogli tutti i nomi di funzione per trovare i duplicati
+  let all_fn_names =
+    list.flat_map(group, fn(t) {
+      let #(_, _, fields) = t
+      list.map(fields, fn(f) { fn_name_for(f) })
+    })
+  let duplicate_names =
+    list.filter(list.unique(all_fn_names), fn(n) {
+      list.length(list.filter(all_fn_names, fn(m) { m == n })) > 1
+    })
+
+  let module_name = case group {
+    [#(mn, _, _), ..] -> mn
+    [] -> ""
+  }
+
+  let all_opts =
+    group
+    |> list.flat_map(fn(t) {
+      let #(_, _, fields) = t
+      list.flat_map(fields, fn(f) { f.arguments })
+      |> list.filter(fn(arg) {
+        case arg.type_ {
+          NonNull(_) -> False
+          _ -> True
+        }
+      })
+    })
+    |> list.append(
+      list.flat_map(group, fn(t) {
+        let #(_, name, _) = t
+        get_query_args_for_type(name, query_fields)
+      }),
+    )
+    |> unique_args()
+
+  let options_type = generate_object_option_type(all_opts, type_defs)
+  let encode_func = generate_object_encode_opts(all_opts, type_defs)
+
+  let bodies =
+    list.map(group, fn(t) {
+      let #(_, name, fields) = t
+      let prefix = fn_prefix_for(name, module_name)
+      let constructor = case get_query_field_for_type(name, query_fields) {
+        option.Some(qf) -> generate_constructor(name, qf, type_defs)
+        option.None -> ""
+      }
+      let constructor_name = to_snake_case(name)
+      let functions =
+        fields
+        |> list.filter(fn(field) { fn_name_for(field) != constructor_name })
+        |> list.map(fn(field) {
+          let fn_prefix = case
+            list.contains(duplicate_names, fn_name_for(field))
+          {
+            True -> prefix
+            False -> ""
+          }
+          generate_function(name, fn_prefix, field, type_defs)
+        })
+        |> string.join("\n\n")
+      constructor <> functions
+    })
+    |> string.join("\n\n")
+
+  header <> imports <> options_type <> encode_func <> bodies
 }

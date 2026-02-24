@@ -1,6 +1,7 @@
 import dagger
 import dagger/dsl/container as c
 import dagger/dsl/host as h
+import dagger/types.{ExecutionError}
 import gleam/io
 import gleam/string
 import gleeunit/should
@@ -45,6 +46,31 @@ pub fn load_local_directory_test() {
     Error(e) -> {
       io.println_error(string.inspect(e))
       should.fail()
+    }
+  }
+}
+
+pub fn exit_code_error_test() {
+  use client <- dagger.connect()
+  let cmd =
+    c.container(opts: [c.Platform("linux/amd64")])
+    |> c.from("alpine:3.21")
+    |> c.with_exec(["sh", "-c", "exit 1"], opts: [])
+
+  use result <- c.stdout(cmd, client)
+  case result {
+    Ok(_) -> should.fail()
+    Error(e) -> {
+      case e {
+        ExecutionError(_) -> {
+          io.println("Correttamente catturato ExecutionError")
+          should.be_true(True)
+        }
+        _ -> {
+          io.println_error("Errore sbagliato: " <> string.inspect(e))
+          should.fail()
+        }
+      }
     }
   }
 }
