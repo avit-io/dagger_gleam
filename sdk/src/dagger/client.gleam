@@ -1,6 +1,6 @@
 import dagger/logger.{Query}
 import dagger/types.{
-  type Client, type GraphQLError, type QueryError, type Try, Client,
+  type Client, type GraphQLError, type QueryError, type Try,
   DecodingError, ExecutionError, GraphQLError, NetworkError,
 }
 import envoy
@@ -10,15 +10,9 @@ import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
 import gleam/httpc
-import gleam/io
 import gleam/json
-import gleam/list
 import gleam/result
 import gleam/string
-
-//pub fn new(endpoint: String, token: String) -> Client {
-//  Client(endpoint: endpoint, token: token)
-//}
 
 fn graphql_error_decoder() -> decode.Decoder(GraphQLError) {
   use message <- decode.field("message", decode.string)
