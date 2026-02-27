@@ -1,7 +1,5 @@
 # 𝌸 Dagger Gleam
 
-> ⚠️ **You are on `main`.** Active development happens on the [`dev`](../../tree/dev) branch.
-
 **The type-safe, deferred execution SDK for Dagger, written in Gleam.**
 
 Dagger Gleam treats your CI/CD pipelines as **data**. Instead of executing commands immediately, you build a **tree of operations** that the SDK then interprets and executes — resolving dependencies automatically.
@@ -112,6 +110,24 @@ sdk/                    # dagger_gleam — the published SDK
 - [ ] Dagger Module support (writing Dagger Modules in Gleam)
 - [ ] ID memoization within a single execution
 - [ ] Published hex package
+
+---
+
+## Release
+
+This project follows **trunk-based development**: all work happens directly on `main`.
+Publishing to Hex is triggered by a version tag — never by a branch push.
+
+```bash
+# 1. bump version in sdk/gleam.toml
+# 2. commit and push to main, wait for green CI
+# 3. tag and push
+git tag v0.1.1
+git push --tags
+```
+
+The CI validates that the tag version matches `sdk/gleam.toml` before publishing.
+If they don't match, the pipeline fails before touching Hex.
 
 ---
 
