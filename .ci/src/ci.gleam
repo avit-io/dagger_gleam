@@ -54,7 +54,10 @@ fn publish_step(project: t.Directory, client: dagger.Client) {
         |> c.with_workdir("/app/sdk", with: c.none)
         |> c.with_exec(["gleam", "deps", "download"], with: c.none)
         |> c.with_secret_variable("HEXPM_API_KEY", secret)
-        |> c.with_exec(["gleam", "publish", "--yes"], with: c.none)
+        |> c.with_exec(
+          ["sh", "-c", "echo 'I am not using semantic versioning' | gleam publish --yes"],
+          with: c.none,
+        )
 
       use result <- c.stdout(publisher, client)
       case result {
