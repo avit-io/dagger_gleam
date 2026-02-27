@@ -10,9 +10,9 @@ pub fn print_gleam_version_test() {
   use client <- dagger.connect()
 
   let cmd =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("ghcr.io/gleam-lang/gleam:v1.14.0-erlang")
-    |> c.with_exec(["gleam", "--version"], opts: [])
+    |> c.with_exec(["gleam", "--version"], with: c.none)
 
   use result <- c.stdout(cmd, client)
 
@@ -32,10 +32,10 @@ pub fn load_local_directory_test() {
   use client <- dagger.connect()
 
   let cmd =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine:3.21")
-    |> c.with_mounted_directory("/src", h.host() |> h.directory("", []), [])
-    |> c.with_exec(["ls"], opts: [])
+    |> c.with_mounted_directory("/src", h.host() |> h.directory("", h.none), c.none)
+    |> c.with_exec(["ls"], with: c.none)
 
   use result <- c.stdout(cmd, client)
 
@@ -53,9 +53,9 @@ pub fn load_local_directory_test() {
 pub fn exit_code_error_test() {
   use client <- dagger.connect()
   let cmd =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine:3.21")
-    |> c.with_exec(["sh", "-c", "exit 1"], opts: [])
+    |> c.with_exec(["sh", "-c", "exit 1"], with: c.none)
 
   use result <- c.stdout(cmd, client)
   case result {

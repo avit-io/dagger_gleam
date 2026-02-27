@@ -30,6 +30,8 @@ pub type FunctionDecl {
     // "t.Container" per chain, "a" per CPS/selection
     return_type: String,
     body: BodyKind,
+    // variant_name degli OptDecl che questa funzione usa (per generare il suo encoder privato)
+    relevant_opts: List(String),
   )
 }
 

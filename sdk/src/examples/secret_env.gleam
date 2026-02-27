@@ -34,13 +34,13 @@ pub fn main() {
 
   // Mount the secret as an env var inside the container.
   let pipeline =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine:3.21")
     |> c.with_secret_variable("MY_TOKEN", secret)
     |> c.with_exec(
       // Dagger masks the real value in logs — only the length leaks.
       ["sh", "-c", "echo \"Token length: $(echo $MY_TOKEN | wc -c)\""],
-      opts: [],
+      with: c.none,
     )
 
   use result <- c.stdout(pipeline, client)

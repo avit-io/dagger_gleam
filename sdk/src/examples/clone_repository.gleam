@@ -16,16 +16,16 @@ pub fn main() {
 
   // Clone a public repo and list files at the root
   let pipeline =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine/git:v2.49.1")
     |> c.with_exec(
       [
         "git", "clone", "--depth=1", "https://github.com/gleam-lang/gleam.git",
         "/repo",
       ],
-      opts: [],
+      with: c.none,
     )
-    |> c.with_exec(["ls", "/repo"], opts: [])
+    |> c.with_exec(["ls", "/repo"], with: c.none)
 
   use result <- c.stdout(pipeline, client)
 

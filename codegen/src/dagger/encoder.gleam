@@ -208,10 +208,10 @@ fn build_required_sig(
   |> string.join(", ")
 }
 
-fn build_opts_sig(optional: List(ArgDef), opt_type: String) -> String {
+fn build_opts_sig(optional: List(ArgDef)) -> String {
   case optional {
     [] -> ""
-    _ -> "opts opts: List(" <> opt_type <> ")"
+    _ -> "with with_fn: fn(Opts) -> Opts"
   }
 }
 
@@ -223,7 +223,7 @@ fn build_cps_sig(
 ) -> String {
   join_sig([
     build_required_sig(required, type_defs),
-    build_opts_sig(optional, "Opt"),
+    build_opts_sig(optional),
     build_client_sig(),
     "then handler: fn(Try(" <> return_type <> ")) -> a",
   ])
@@ -233,7 +233,7 @@ fn generate_args_sig(args: List(ArgDef), type_defs: List(TypeDef)) -> String {
   let #(required, optional) = split_args(args)
   join_sig([
     build_required_sig(required, type_defs),
-    build_opts_sig(optional, "Opt"),
+    build_opts_sig(optional),
   ])
 }
 
@@ -367,22 +367,6 @@ fn split_args(args: List(ArgDef)) -> #(List(ArgDef), List(ArgDef)) {
   })
 }
 
-fn unique_args(args: List(ArgDef)) -> List(ArgDef) {
-  list.fold(over: args, from: [], with: fn(acc, arg) {
-    let ArgDef(name: argn, type_: argt, ..) = arg
-    let exists =
-      list.any(acc, fn(a) {
-        let ArgDef(name: an, type_: at, ..) = a
-        an == argn && get_return_type_name(at) == get_return_type_name(argt)
-      })
-    case exists {
-      True -> acc
-      False -> [arg, ..acc]
-    }
-  })
-  |> list.reverse
-}
-
 fn get_variant_name(arg: ArgDef, all_opts: List(ArgDef)) -> String {
   let ArgDef(name: argn, type_: argt, ..) = arg
   let same_name_different_type =
@@ -416,15 +400,6 @@ pub fn get_query_fields(
     }
   })
   |> result.unwrap([])
-}
-
-fn get_query_args_for_type(
-  target_name: String,
-  query_fields: List(FieldDef),
-) -> List(ArgDef) {
-  query_fields
-  |> list.filter(fn(f) { get_return_type_name(f.return_type) == target_name })
-  |> list.flat_map(fn(f) { f.arguments })
 }
 
 fn get_query_field_for_type(
@@ -784,6 +759,9 @@ fn field_to_chain_decl(
       ])
     False -> generate_args_sig(field.arguments, type_defs)
   }
+  let #(_, optional) = split_args(field.arguments)
+  let relevant_opts =
+    list.map(build_opt_decls(optional, type_defs), fn(o) { o.variant_name })
   FunctionDecl(
     name: fn_name_for(field),
     docs: description_for(field),
@@ -795,6 +773,7 @@ fn field_to_chain_decl(
       return_type_name: return_type_name,
       parent: is_object,
     ),
+    relevant_opts: relevant_opts,
   )
 }
 
@@ -808,6 +787,7 @@ fn field_to_cps_decl(
   let gql_args = generate_gql_args(field.arguments, type_defs)
   let decoder = decode_for_type(field.return_type, type_defs)
   let pure_ok = pure_ok_for_type(field.return_type)
+  let #(required, optional) = split_args(field.arguments)
   let sig = case is_object {
     True -> {
       let args_part = generate_args_sig(field.arguments, type_defs)
@@ -818,11 +798,10 @@ fn field_to_cps_decl(
         "then handler: fn(Try(" <> return_type <> ")) -> a",
       ])
     }
-    False -> {
-      let #(required, optional) = split_args(field.arguments)
-      build_cps_sig(required, optional, return_type, type_defs)
-    }
+    False -> build_cps_sig(required, optional, return_type, type_defs)
   }
+  let relevant_opts =
+    list.map(build_opt_decls(optional, type_defs), fn(o) { o.variant_name })
   FunctionDecl(
     name: fn_name_for(field),
     docs: description_for(field),
@@ -835,6 +814,7 @@ fn field_to_cps_decl(
       pure_ok: pure_ok,
       parent: is_object,
     ),
+    relevant_opts: relevant_opts,
   )
 }
 
@@ -849,6 +829,7 @@ fn field_to_selection_decl(
   let inner_ref = "t." <> inner_name
   let return_type = print_type_ref(field.return_type, type_defs)
   let gql_args = generate_gql_args(field.arguments, type_defs)
+  let #(required, optional) = split_args(field.arguments)
   let sig = case is_object {
     True -> {
       let args_part = generate_args_sig(field.arguments, type_defs)
@@ -860,17 +841,17 @@ fn field_to_selection_decl(
         "then handler: fn(Try(" <> return_type <> ")) -> a",
       ])
     }
-    False -> {
-      let #(required, optional) = split_args(field.arguments)
+    False ->
       join_sig([
         build_required_sig(required, type_defs),
-        build_opts_sig(optional, "Opt"),
+        build_opts_sig(optional),
         "select select: fn(" <> inner_ref <> ") -> List(types.Field)",
         build_client_sig(),
         "then handler: fn(Try(" <> return_type <> ")) -> a",
       ])
-    }
   }
+  let relevant_opts =
+    list.map(build_opt_decls(optional, type_defs), fn(o) { o.variant_name })
   FunctionDecl(
     name: fn_name_for(field),
     docs: description_for(field),
@@ -882,6 +863,7 @@ fn field_to_selection_decl(
       inner_type: inner_name,
       parent: is_object,
     ),
+    relevant_opts: relevant_opts,
   )
 }
 
@@ -898,9 +880,11 @@ fn build_constructor_decl(
   let sig =
     join_sig([
       build_required_sig(required, type_defs),
-      build_opts_sig(optional, "Opt"),
+      build_opts_sig(optional),
     ])
   let gql_args = generate_gql_args(query_field.arguments, type_defs)
+  let relevant_opts =
+    list.map(build_opt_decls(optional, type_defs), fn(o) { o.variant_name })
   FunctionDecl(
     name: to_snake_case(name),
     docs: "",
@@ -912,6 +896,7 @@ fn build_constructor_decl(
       return_type_name: name,
       parent: False,
     ),
+    relevant_opts: relevant_opts,
   )
 }
 
@@ -936,24 +921,6 @@ pub fn to_module_decl(
         _ -> False
       }
     })
-
-  // Raccolta optional args da tutti i fields + query args per questo tipo
-  let raw_optional_args =
-    fields
-    |> list.flat_map(fn(f) { f.arguments })
-    |> list.filter(fn(arg) {
-      case arg.type_ {
-        NonNull(_) -> False
-        _ -> True
-      }
-    })
-    |> list.append(case is_object {
-      True -> get_query_args_for_type(name, query_fields)
-      False -> []
-    })
-    |> unique_args()
-
-  let opts = build_opt_decls(raw_optional_args, type_defs)
 
   let constructor_name = to_snake_case(name)
 
@@ -995,7 +962,30 @@ pub fn to_module_decl(
     option.None -> method_fns
   }
 
-  ModuleDecl(name: name, opts: opts, functions: all_functions)
+  // Aggrega tutti gli opt opzionali da tutti i campi del modulo, deduplicando
+  let collect_field_opts = fn(f: FieldDef) {
+    let #(_, optional) = split_args(f.arguments)
+    build_opt_decls(optional, type_defs)
+  }
+  let constructor_field_opts = case is_object {
+    False -> []
+    True ->
+      case get_query_field_for_type(name, query_fields) {
+        option.Some(qf) -> collect_field_opts(qf)
+        option.None -> []
+      }
+  }
+  let method_field_opts = list.flat_map(method_fields, collect_field_opts)
+  let module_opts =
+    list.append(constructor_field_opts, method_field_opts)
+    |> list.fold([], fn(acc, opt) {
+      case list.any(acc, fn(o: OptDecl) { o.variant_name == opt.variant_name }) {
+        True -> acc
+        False -> list.append(acc, [opt])
+      }
+    })
+
+  ModuleDecl(name: name, opts: module_opts, functions: all_functions)
 }
 
 // =============================================================================

@@ -15,18 +15,18 @@ pub fn main() {
   use client <- dagger.connect()
 
   let pipeline =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine:3.21")
-    |> c.with_env_variable("APP_ENV", "production", [])
-    |> c.with_env_variable("APP_VERSION", "1.0.0", [])
-    |> c.with_env_variable("APP_NAME", "my-gleam-app", [])
+    |> c.with_env_variable("APP_ENV", "production", with: c.none)
+    |> c.with_env_variable("APP_VERSION", "1.0.0", with: c.none)
+    |> c.with_env_variable("APP_NAME", "my-gleam-app", with: c.none)
     |> c.with_exec(
       [
         "sh",
         "-c",
         "echo APP_ENV=$APP_ENV APP_VERSION=$APP_VERSION APP_NAME=$APP_NAME",
       ],
-      opts: [],
+      with: c.none,
     )
 
   use result <- c.stdout(pipeline, client)

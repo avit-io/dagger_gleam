@@ -1,25 +1,24 @@
 import dagger/runner.{DecodeError, FileError, run}
+import envoy
 import gleam/io
+import gleam/result
 import simplifile
 
-type Size {
-  Standard
-  Simplified
-}
+const default_schema = "src/dagger/schema.generated.json"
 
-fn schema_path(size: Size) -> String {
-  case size {
-    Standard -> "src/dagger/schema.generated.json"
-    Simplified -> "/tmp/test_schema.json"
-  }
-}
+const default_output = "../sdk/src/dagger/dsl"
 
 pub fn main() {
-  io.println("🚀 Avvio generazione SDK...")
-  case run(schema_path(Standard), "../sdk/src/dagger/dsl") {
-    Ok(_) -> io.println("✨ src/dagger/generated aggiornato!")
+  let schema =
+    envoy.get("CODEGEN_SCHEMA") |> result.unwrap(default_schema)
+  let output =
+    envoy.get("CODEGEN_OUTPUT") |> result.unwrap(default_output)
+
+  io.println("Generazione SDK: " <> schema <> " → " <> output)
+  case run(schema, output) {
+    Ok(_) -> io.println("Generato in: " <> output)
     Error(FileError(err)) ->
-      io.println("❌ Errore file: " <> simplifile.describe_error(err))
-    Error(DecodeError(msg)) -> io.println("❌ Errore parsing: " <> msg)
+      io.println("Errore file: " <> simplifile.describe_error(err))
+    Error(DecodeError(msg)) -> io.println("Errore parsing: " <> msg)
   }
 }

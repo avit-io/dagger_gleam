@@ -19,11 +19,11 @@ pub fn main() {
   // Clone the Gleam repository at a specific tag — no git binary needed,
   // Dagger handles the fetch natively.
   let repo =
-    dag.git("https://github.com/gleam-lang/gleam.git", [])
+    dag.git("https://github.com/gleam-lang/gleam.git", with: dag.none)
     |> git.tag("v1.14.0")
-    |> git.tree([])
+    |> git.tree(with: git.none)
 
-  use result <- dir.entries(repo, [], client)
+  use result <- dir.entries(repo, dir.none, client)
   case result {
     Ok(entries) -> {
       io.println("Repository root contents:")

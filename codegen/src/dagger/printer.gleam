@@ -69,45 +69,114 @@ fn fn_prefix_for(type_name: String, module_name: String) -> String {
 // 3. RENDERING OPT TYPE E ENCODE_OPTS
 // =============================================================================
 
-fn render_opt_type(opts: List(OptDecl)) -> String {
+fn render_opts_record(opts: List(OptDecl)) -> String {
   case opts {
     [] -> ""
     _ -> {
-      let variants =
+      let fields =
         opts
-        |> list.map(fn(opt) {
-          "  " <> opt.variant_name <> "(" <> opt.gleam_type <> ")"
+        |> list.map(fn(o) {
+          "    " <> to_snake_case(o.variant_name) <> ": Option(" <> o.gleam_type <> ")"
         })
-        |> string.join("\n")
-      "pub type Opt {\n" <> variants <> "\n}\n\n"
+        |> string.join(",\n")
+      "pub type Opts {\n  Opts(\n" <> fields <> ",\n  )\n}\n\n"
     }
   }
 }
 
-fn render_encode_opts(opts: List(OptDecl)) -> String {
+fn render_defaults(opts: List(OptDecl)) -> String {
   case opts {
     [] -> ""
     _ -> {
-      let cases =
+      let fields =
         opts
-        |> list.map(fn(opt) {
-          "    "
-          <> opt.variant_name
-          <> "(val) -> Ok(#(\""
-          <> opt.arg_name
-          <> "\", "
-          <> opt.gql_value
-          <> "))"
+        |> list.map(fn(o) { "    " <> to_snake_case(o.variant_name) <> ": None" })
+        |> string.join(",\n")
+      "fn defaults() -> Opts {\n  Opts(\n" <> fields <> ",\n  )\n}\n\n"
+    }
+  }
+}
+
+fn render_none(opts: List(OptDecl)) -> String {
+  case opts {
+    [] -> ""
+    _ -> "pub fn none(opts: Opts) -> Opts {\n  opts\n}\n\n"
+  }
+}
+
+fn render_setters(opts: List(OptDecl), fn_names: List(String)) -> String {
+  case opts {
+    [] -> ""
+    _ ->
+      opts
+      |> list.map(fn(o) {
+        let field = to_snake_case(o.variant_name)
+        let fname = case list.contains(fn_names, field) {
+          True -> "opt_" <> field
+          False -> field
+        }
+        "pub fn "
+        <> fname
+        <> "(opts: Opts, val: "
+        <> o.gleam_type
+        <> ") -> Opts {\n"
+        <> "  Opts(..opts, "
+        <> field
+        <> ": Some(val))\n"
+        <> "}"
+      })
+      |> string.join("\n\n")
+      |> fn(s) { s <> "\n\n" }
+  }
+}
+
+fn render_function_encoder(
+  fn_full_name: String,
+  relevant_variants: List(String),
+  all_opts: List(OptDecl),
+) -> String {
+  case relevant_variants {
+    [] -> ""
+    _ -> {
+      let relevant =
+        list.filter(all_opts, fn(o: OptDecl) {
+          list.contains(relevant_variants, o.variant_name)
         })
-        |> string.join("\n")
-      "pub fn encode_opts(opts: List(Opt)) -> List(#(String, types.Value)) {\n"
-      <> "  list.filter_map(opts, fn(opt) {\n"
-      <> "    case opt {\n"
+      let cases =
+        relevant
+        |> list.map(fn(o) {
+          let fname = to_snake_case(o.variant_name)
+          "    case opts."
+          <> fname
+          <> " {\n"
+          <> "      Some(val) -> Ok(#(\""
+          <> o.arg_name
+          <> "\", "
+          <> o.gql_value
+          <> "))\n"
+          <> "      None -> Error(Nil)\n"
+          <> "    }"
+        })
+        |> string.join(",\n")
+      "fn encode_"
+      <> fn_full_name
+      <> "(opts: Opts) -> List(#(String, types.Value)) {\n"
+      <> "  list.filter_map([\n"
       <> cases
-      <> "\n    }\n"
-      <> "  })\n"
+      <> "\n  ], fn(x) { x })\n"
       <> "}\n\n"
     }
+  }
+}
+
+fn patch_body_encode_fn(body: BodyKind, encode_fn_name: String) -> BodyKind {
+  let patch = fn(s: String) {
+    string.replace(s, "encode_opts(opts)", encode_fn_name <> "(opts)")
+  }
+  case body {
+    Chain(f, a, r, p) -> Chain(f, patch(a), r, p)
+    Cps(f, a, d, ok, p) -> Cps(f, patch(a), d, ok, p)
+    Selection(f, a, it, p) -> Selection(f, patch(a), it, p)
   }
 }
 
@@ -239,16 +308,31 @@ fn render_selection_body(body: BodyKind) -> String {
 // 5. RENDERING FUNZIONI
 // =============================================================================
 
-fn render_function(decl: FunctionDecl, prefix: String) -> String {
-  let body = case decl.body {
-    Chain(_, _, _, _) -> render_chain_body(decl.body)
-    Cps(_, _, _, _, _) -> render_cps_body(decl.body)
-    Selection(_, _, _, _) -> render_selection_body(decl.body)
+fn render_function(
+  decl: FunctionDecl,
+  prefix: String,
+  all_opts: List(OptDecl),
+) -> String {
+  let fn_full_name = prefix <> decl.name
+  let patched_body = case decl.relevant_opts {
+    [] -> decl.body
+    _ -> patch_body_encode_fn(decl.body, "encode_" <> fn_full_name)
   }
-  decl.docs
+  let opts_prelude = case decl.relevant_opts {
+    [] -> ""
+    _ -> "  let opts = with_fn(defaults())\n"
+  }
+  let body =
+    opts_prelude
+    <> case patched_body {
+      Chain(_, _, _, _) -> render_chain_body(patched_body)
+      Cps(_, _, _, _, _) -> render_cps_body(patched_body)
+      Selection(_, _, _, _) -> render_selection_body(patched_body)
+    }
+  render_function_encoder(fn_full_name, decl.relevant_opts, all_opts)
+  <> decl.docs
   <> "pub fn "
-  <> prefix
-  <> decl.name
+  <> fn_full_name
   <> "("
   <> decl.signature
   <> ") -> "
@@ -271,31 +355,43 @@ fn has_terminal(decl: ModuleDecl) -> Bool {
   })
 }
 
-fn module_imports(terminal: Bool) -> String {
+fn module_imports(terminal: Bool, has_opts: Bool) -> String {
+  let option_import = case has_opts {
+    True -> "import gleam/option.{type Option, None, Some}\n"
+    False -> ""
+  }
   case terminal {
     True ->
       "import dagger/types.{type Client, type Try} as types\n"
       <> "import dagger/interpreter\n"
       <> "import dagger/dsl/types as t\n"
       <> "import gleam/dynamic/decode\n"
-      <> "import gleam/list\n\n"
+      <> "import gleam/list\n"
+      <> option_import
+      <> "\n"
     False ->
       "import dagger/types as types\n"
       <> "import dagger/dsl/types as t\n"
-      <> "import gleam/list\n\n"
+      <> "import gleam/list\n"
+      <> option_import
+      <> "\n"
   }
 }
 
 fn render_module(decl: ModuleDecl) -> String {
   let header = "// AUTO-GENERATED BY DAGGER_GLEAM - DO NOT EDIT\n\n"
-  let imports = module_imports(has_terminal(decl))
-  let opt_type = render_opt_type(decl.opts)
-  let encode_opts_str = render_encode_opts(decl.opts)
+  let imports = module_imports(has_terminal(decl), decl.opts != [])
+  let fn_names = list.map(decl.functions, fn(f) { f.name })
+  let opt_section =
+    render_opts_record(decl.opts)
+    <> render_defaults(decl.opts)
+    <> render_none(decl.opts)
+    <> render_setters(decl.opts, fn_names)
   let functions =
     decl.functions
-    |> list.map(fn(f) { render_function(f, "") })
+    |> list.map(fn(f) { render_function(f, "", decl.opts) })
     |> string.join("\n\n")
-  header <> imports <> opt_type <> encode_opts_str <> functions
+  header <> imports <> opt_section <> functions
 }
 
 // =============================================================================
@@ -334,7 +430,29 @@ fn generate_grouped_module(
         }
       })
     })
-  let imports = module_imports(terminal)
+  // Merge opts da tutti i tipi del gruppo, deduplicando per variant_name
+  let merged_opts =
+    list.flat_map(type_data, fn(td) {
+      let #(_, m) = td
+      m.opts
+    })
+    |> list.fold([], fn(acc, opt) {
+      case list.any(acc, fn(o: OptDecl) { o.variant_name == opt.variant_name }) {
+        True -> acc
+        False -> list.append(acc, [opt])
+      }
+    })
+  let imports = module_imports(terminal, merged_opts != [])
+  let all_fn_names =
+    list.flat_map(type_data, fn(td) {
+      let #(_, m) = td
+      list.map(m.functions, fn(f) { f.name })
+    })
+  let opt_section =
+    render_opts_record(merged_opts)
+    <> render_defaults(merged_opts)
+    <> render_none(merged_opts)
+    <> render_setters(merged_opts, all_fn_names)
 
   // Trova nomi di funzione duplicati (esclusi i costruttori con parent=False)
   let all_fn_names =
@@ -352,23 +470,6 @@ fn generate_grouped_module(
       list.length(list.filter(all_fn_names, fn(m) { m == n })) > 1
     })
 
-  // Merge opts da tutti i ModuleDecl (dedup per variant_name)
-  let all_opts =
-    list.flat_map(type_data, fn(td) {
-      let #(_, m) = td
-      m.opts
-    })
-    |> list.fold([], fn(acc: List(OptDecl), opt) {
-      case list.any(acc, fn(o: OptDecl) { o.variant_name == opt.variant_name }) {
-        True -> acc
-        False -> [opt, ..acc]
-      }
-    })
-    |> list.reverse
-
-  let opt_type = render_opt_type(all_opts)
-  let encode_opts_str = render_encode_opts(all_opts)
-
   // Render funzioni per ogni tipo
   let bodies =
     list.map(type_data, fn(td) {
@@ -384,14 +485,14 @@ fn generate_grouped_module(
               False -> ""
             }
         }
-        render_function(f, actual_prefix)
+        render_function(f, actual_prefix, merged_opts)
       })
       |> string.join("\n\n")
     })
     |> list.filter(fn(s) { s != "" })
     |> string.join("\n\n")
 
-  header <> imports <> opt_type <> encode_opts_str <> bodies
+  header <> imports <> opt_section <> bodies
 }
 
 // =============================================================================

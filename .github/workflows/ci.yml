@@ -2,23 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
   pull_request:
     branches: [main]
 
 jobs:
-  test:
-    name: Generate and Test
+  pipeline:
+    name: Build, Test and Publish
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # Installiamo l'ambiente tramite Nix (Erlang, Gleam, JQ, Dagger, dgl)
       - uses: cachix/install-nix-action@v27
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
-      # Eseguiamo tutto tramite il comando che usi in locale
-      - name: Full CI Pipeline
-        run: nix develop .#default --command dgl ci
+      - name: Run CI Pipeline
+        env:
+          # Il secret viene passato solo su main — su dev/PR publish_step skippa
+          HEXPM_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.HEXPM_API_KEY || '' }}
+        run: nix develop .#ci --command sh -c "cd .ci && gleam deps download && dagger run gleam run"

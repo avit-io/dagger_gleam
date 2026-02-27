@@ -62,6 +62,7 @@
           pkgs.docker-client
           dagger.packages.${system}.dagger
           pkgs.nodejs_24
+          pkgs.gh
           dgl
         ];
 

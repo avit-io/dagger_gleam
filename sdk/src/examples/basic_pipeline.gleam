@@ -15,11 +15,11 @@ pub fn main() {
   use client <- dagger.connect()
 
   let pipeline =
-    c.container(opts: [c.Platform("linux/amd64")])
+    c.container(with: fn(o) { o |> c.opt_platform("linux/amd64") })
     |> c.from("alpine:3.21")
     |> c.with_exec(
       ["echo", "Hello from Lucy! ⭐ Gleam pipelines are just data."],
-      opts: [],
+      with: c.none,
     )
 
   use result <- c.stdout(pipeline, client)

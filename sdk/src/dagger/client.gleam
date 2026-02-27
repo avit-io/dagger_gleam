@@ -32,20 +32,13 @@ fn check_graphql_errors(
 }
 
 pub fn connect(callback: fn(Client) -> a) -> a {
-  // Recuperiamo la porta con un default (Dagger di solito usa porte dinamiche,
-  // ma per i test locali spesso si usa la 8080 o simili)
   let port = envoy.get("DAGGER_SESSION_PORT") |> result.unwrap("8080")
-
-  // Recuperiamo il token
   let token = envoy.get("DAGGER_SESSION_TOKEN") |> result.unwrap("")
-
-  // Costruiamo l'endpoint completo
-  let endpoint = "http://127.0.0.1:" <> port <> "/query"
-
-  // Creiamo il record Client
+  // DAGGER_SESSION_HOST permette di raggiungere la sessione da inside un
+  // container (es. via service binding); default 127.0.0.1 per uso normale.
+  let host = envoy.get("DAGGER_SESSION_HOST") |> result.unwrap("127.0.0.1")
+  let endpoint = "http://" <> host <> ":" <> port <> "/query"
   let client = types.Client(endpoint: endpoint, token: token)
-
-  // Passiamo il client alla funzione dell'utente
   callback(client)
 }
 

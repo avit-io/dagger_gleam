@@ -6,3 +6,4 @@ erl_crash.dump
 sdk/src/dagger/dsl
 build/
 codegen/src/dagger/schema.generated.json
+.ci/dist/
