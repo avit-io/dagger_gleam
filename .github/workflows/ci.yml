@@ -18,8 +18,13 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
+      # Bootstrap: fetch schema via Dagger session, then run codegen on host.
+      # Produces sdk/src/dagger/dsl/ so that ci.gleam can compile in the next step.
+      - name: Bootstrap — Fetch schema and generate DSL
+        run: nix develop .#ci --command sh -c 'bash codegen/scripts/fetch_schema.sh && cd codegen && gleam run -m dagger_codegen'
+
       - name: Run CI Pipeline
         env:
           # Il secret viene passato solo su main — su dev/PR publish_step skippa
           HEXPM_API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.HEXPM_API_KEY || '' }}
-        run: nix develop .#ci --command sh -c "cd .ci && gleam deps download && dagger run gleam run"
+        run: nix develop .#ci --command sh -c 'cd .ci && gleam deps download && dagger run --progress=plain gleam run'

@@ -115,14 +115,18 @@ fn render_setters(opts: List(OptDecl), fn_names: List(String)) -> String {
           True -> "opt_" <> field
           False -> field
         }
+        let constructor = case list.length(opts) {
+          1 -> "Opts(" <> field <> ": Some(val))"
+          _ -> "Opts(..opts, " <> field <> ": Some(val))"
+        }
         "pub fn "
         <> fname
         <> "(opts: Opts, val: "
         <> o.gleam_type
         <> ") -> Opts {\n"
-        <> "  Opts(..opts, "
-        <> field
-        <> ": Some(val))\n"
+        <> "  "
+        <> constructor
+        <> "\n"
         <> "}"
       })
       |> string.join("\n\n")
