@@ -1,5 +1,5 @@
 name = "dagger_gleam"
-version = "0.1.0"
+version = "0.1.1"
 description = "Gleam SDK for Dagger — type-safe pipelines via GraphQL codegen"
 licences = ["MIT"]
 repository = { type = "github", user = "avit-io", repo = "dagger_gleam" }

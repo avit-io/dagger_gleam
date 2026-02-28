@@ -717,6 +717,8 @@ fn build_opt_decls(
       arg_name: arg.name,
       gleam_type: gleam_type,
       gql_value: gql_value,
+      universal: False,
+      tag: "",
     )
   })
 }
@@ -774,6 +776,7 @@ fn field_to_chain_decl(
       parent: is_object,
     ),
     relevant_opts: relevant_opts,
+    opt_tag: "",
   )
 }
 
@@ -815,6 +818,7 @@ fn field_to_cps_decl(
       parent: is_object,
     ),
     relevant_opts: relevant_opts,
+    opt_tag: "",
   )
 }
 
@@ -864,6 +868,7 @@ fn field_to_selection_decl(
       parent: is_object,
     ),
     relevant_opts: relevant_opts,
+    opt_tag: "",
   )
 }
 
@@ -897,6 +902,7 @@ fn build_constructor_decl(
       parent: False,
     ),
     relevant_opts: relevant_opts,
+    opt_tag: "",
   )
 }
 
@@ -985,7 +991,202 @@ pub fn to_module_decl(
       }
     })
 
-  ModuleDecl(name: name, opts: module_opts, functions: all_functions)
+  // Bridge test: calcola opt universali e gruppi phantom
+  let fn_opts_input =
+    list.filter_map(all_functions, fn(f) {
+      case f.relevant_opts {
+        [] -> Error(Nil)
+        opts -> Ok(#(f.name, opts))
+      }
+    })
+  let #(universal_opts, groups) = compute_phantom_groups(fn_opts_input)
+  let #(fn_to_tag, phantom_decls) =
+    build_phantom_info(groups, fn_opts_input, universal_opts)
+
+  // Aggiorna opt_tag e signature (sostituisce "fn(Opts) -> Opts" con il tag corretto)
+  let tagged_functions =
+    list.map(all_functions, fn(f) {
+      let tag =
+        list.find_map(fn_to_tag, fn(pair) {
+          case pair.0 == f.name {
+            True -> Ok(pair.1)
+            False -> Error(Nil)
+          }
+        })
+        |> result.unwrap("")
+      let new_sig =
+        string.replace(
+          f.signature,
+          "fn(Opts) -> Opts",
+          "fn(Opts(" <> tag <> ")) -> Opts(" <> tag <> ")",
+        )
+      FunctionDecl(..f, opt_tag: tag, signature: new_sig)
+    })
+
+  // Aggiorna universal e tag su ogni opt
+  // Per gli opt non-universali, il tag si ricava dalla prima funzione che lo usa
+  let tagged_opts =
+    list.map(module_opts, fn(o) {
+      let is_universal = list.contains(universal_opts, o.variant_name)
+      let opt_tag = case is_universal {
+        True -> "a"
+        False ->
+          list.find_map(tagged_functions, fn(f) {
+            case list.contains(f.relevant_opts, o.variant_name) {
+              True -> Ok(f.opt_tag)
+              False -> Error(Nil)
+            }
+          })
+          |> result.unwrap("a")
+      }
+      OptDecl(..o, universal: is_universal, tag: opt_tag)
+    })
+
+  ModuleDecl(
+    name: name,
+    opts: tagged_opts,
+    functions: tagged_functions,
+    phantom_decls: phantom_decls,
+  )
+}
+
+// =============================================================================
+// PHANTOM GROUPS — Bridge Test
+// =============================================================================
+
+fn to_pascal_case(name: String) -> String {
+  name
+  |> string.split("_")
+  |> list.map(capitalize)
+  |> string.join("")
+}
+
+// Dato: fn_opts = [(fn_name, [variant_name])]
+// Restituisce: (universal_variant_names, groups_of_fn_names)
+fn compute_phantom_groups(
+  fn_opts: List(#(String, List(String))),
+) -> #(List(String), List(List(String))) {
+  let all_variants =
+    list.flat_map(fn_opts, fn(p) { p.1 })
+    |> list.unique
+  let base_count = list.length(connected_components(fn_opts, all_variants))
+  let bridge_opts =
+    list.filter(all_variants, fn(v) {
+      let without = list.filter(all_variants, fn(w) { w != v })
+      list.length(connected_components(fn_opts, without)) > base_count
+    })
+  let non_bridge =
+    list.filter(all_variants, fn(v) { !list.contains(bridge_opts, v) })
+  #(bridge_opts, connected_components(fn_opts, non_bridge))
+}
+
+fn connected_components(
+  fn_opts: List(#(String, List(String))),
+  active: List(String),
+) -> List(List(String)) {
+  find_components(list.map(fn_opts, fn(p) { p.0 }), fn_opts, active, [])
+}
+
+fn find_components(
+  remaining: List(String),
+  fn_opts: List(#(String, List(String))),
+  active: List(String),
+  acc: List(List(String)),
+) -> List(List(String)) {
+  case remaining {
+    [] -> acc
+    [first, ..rest] -> {
+      let comp = bfs_component([first], [first], fn_opts, active)
+      let new_remaining = list.filter(rest, fn(n) { !list.contains(comp, n) })
+      find_components(new_remaining, fn_opts, active, [comp, ..acc])
+    }
+  }
+}
+
+fn bfs_component(
+  queue: List(String),
+  visited: List(String),
+  fn_opts: List(#(String, List(String))),
+  active: List(String),
+) -> List(String) {
+  case queue {
+    [] -> visited
+    [current, ..rest] -> {
+      let curr_vars =
+        list.find_map(fn_opts, fn(p) {
+          case p.0 == current {
+            True -> Ok(list.filter(p.1, fn(v) { list.contains(active, v) }))
+            False -> Error(Nil)
+          }
+        })
+        |> result.unwrap([])
+      let new_neighbors =
+        list.filter_map(fn_opts, fn(p) {
+          let #(fname, fvars) = p
+          case
+            !list.contains(visited, fname)
+            && list.any(curr_vars, fn(v) { list.contains(fvars, v) })
+          {
+            True -> Ok(fname)
+            False -> Error(Nil)
+          }
+        })
+      bfs_component(
+        list.append(rest, new_neighbors),
+        list.append(visited, new_neighbors),
+        fn_opts,
+        active,
+      )
+    }
+  }
+}
+
+// Dato: groups (componenti connesse), fn_opts, universal_opts
+// Restituisce: (fn_name → tag_name, phantom_decls)
+fn build_phantom_info(
+  groups: List(List(String)),
+  fn_opts: List(#(String, List(String))),
+  universal_opts: List(String),
+) -> #(List(#(String, String)), List(#(String, List(String)))) {
+  list.fold(groups, #([], []), fn(acc, group) {
+    let #(fn_to_tag, tag_decls) = acc
+    case group {
+      [] -> acc
+      [single] -> {
+        let fn_vars =
+          list.find_map(fn_opts, fn(p) {
+            case p.0 == single {
+              True -> Ok(p.1)
+              False -> Error(Nil)
+            }
+          })
+          |> result.unwrap([])
+        let has_specific =
+          list.any(fn_vars, fn(v) { !list.contains(universal_opts, v) })
+        case has_specific {
+          False ->
+            #(list.append(fn_to_tag, [#(single, "a")]), tag_decls)
+          True -> {
+            let tag_name = "For" <> to_pascal_case(single)
+            #(
+              list.append(fn_to_tag, [#(single, tag_name)]),
+              list.append(tag_decls, [#(tag_name, [])]),
+            )
+          }
+        }
+      }
+      multiple -> {
+        let sorted = list.sort(multiple, string.compare)
+        let first = result.unwrap(list.first(sorted), "")
+        let type_name = to_pascal_case(first) <> "Fns"
+        let variants = list.map(sorted, to_pascal_case)
+        #(
+          list.append(fn_to_tag, list.map(multiple, fn(n) { #(n, type_name) })),
+          list.append(tag_decls, [#(type_name, variants)]),
+        )
+      }
+    }
+  })
 }
 
 // =============================================================================

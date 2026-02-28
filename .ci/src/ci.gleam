@@ -18,7 +18,7 @@ pub fn main() {
   let project =
     h.host()
     |> h.directory("..", with: fn(o) {
-      o |> h.exclude(["**/.git", "**/build"])
+      o |> h.opt_exclude(["**/.git", "**/build"])
     })
 
   let dist =

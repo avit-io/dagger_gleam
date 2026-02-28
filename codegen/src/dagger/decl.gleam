@@ -7,7 +7,15 @@
 
 /// Un modulo Gleam completo da generare.
 pub type ModuleDecl {
-  ModuleDecl(name: String, opts: List(OptDecl), functions: List(FunctionDecl))
+  ModuleDecl(
+    name: String,
+    opts: List(OptDecl),
+    functions: List(FunctionDecl),
+    // Tipi phantom da emettere: (type_name, variants)
+    // variants=[] → pub type ForFoo
+    // variants=[..] → pub type FooFns { ForFn1 | ForFn2 | ... }
+    phantom_decls: List(#(String, List(String))),
+  )
 }
 
 /// Una variante dell'Opt type per un argomento opzionale.
@@ -17,6 +25,11 @@ pub type OptDecl {
     arg_name: String,
     gleam_type: String,
     gql_value: String,
+    // True → setter polimorfico: fn(Opts(a), T) -> Opts(a)
+    // False → setter specifico: fn(Opts(tag), T) -> Opts(tag)
+    universal: Bool,
+    // Nome del tipo phantom da usare nel setter ("a" se universal, "ForFoo"/"FooFns" altrimenti)
+    tag: String,
   )
 }
 
@@ -32,6 +45,8 @@ pub type FunctionDecl {
     body: BodyKind,
     // variant_name degli OptDecl che questa funzione usa (per generare il suo encoder privato)
     relevant_opts: List(String),
+    // Nome del tipo phantom per Opts: "ForFoo", "FooFns", "a" (polimorfico), "" (nessun opt)
+    opt_tag: String,
   )
 }
 
