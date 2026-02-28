@@ -100,4 +100,4 @@ The `examples/` directory in the [source repository](https://github.com/avit-io/
 
 [github.com/avit-io/dagger_gleam](https://github.com/avit-io/dagger_gleam)
 
-Issues and PRs are welcome. Active development happens on the `dev` branch.
+Issues and PRs are welcome.
